@@ -1,44 +1,53 @@
+// /utils/tool.js
 import { execSync } from 'child_process';
 import { Type } from '@google/genai';
 import { mkdirSync, writeFileSync } from 'fs';
 
+// ✅ Regex parser utility
+function parseEchoCommand(command) {
+  const match = command.match(/^echo\s+(['"`])([\s\S]*)\1\s*>\s*(.+)$/);
+  if (!match) return null;
+
+  let [, , rawContent, filePath] = match;
+
+  // Convert literal \n to real newlines and unescape quotes
+  rawContent = rawContent.replace(/\\n/g, '\n')
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(/\\`/g, '`');
+
+  return { content: rawContent, filePath };
+}
 
 export const functionDeclarations = [
   {
     name: "create_directory",
-    description: "Creates a new directory in the system",
+    description: "Creates a new directory",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        directory_name: {
-          type: Type.STRING,
-          description: "Name of the directory to create"
-        }
+        directory_name: { type: Type.STRING, description: "Directory name" }
       },
       required: ["directory_name"]
     }
   },
   {
     name: "run_command",
-    description: "Executes a shell command in the system and returns the output or error",
+    description: "Executes a shell command and returns output or error",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        command: {
-          type: Type.STRING,
-          description: "The shell command to execute"
-        }
+        command: { type: Type.STRING, description: "Shell command" }
       },
       required: ["command"]
     }
   }
 ];
+
 export async function handleToolCalls(func) {
-  console.log("\n\nInside handle tools\n\n");
   if (!func) {
-    const msg = "No function call returned";
-    console.log(`⚠️ ${msg}`);
-    return { success: false, error: msg };
+    console.error("⚠️ No function call returned");
+    return { success: false, error: "No function call returned" };
   }
 
   if (func.name === "create_directory") {
@@ -52,36 +61,24 @@ export async function handleToolCalls(func) {
       return { success: false, error: error.message };
     }
   }
-  else if (func.name === "run_command") {
-  const { command } = func.args;
 
-  // Match echo + any quote type + content + same closing quote + > + filepath
-  const writeMatch = command.match(
-    /^echo\s+(['"`])([\s\S]*)\1\s*>\s*(.+)$/
-  );
+  if (func.name === "run_command") {
+    const { command } = func.args;
 
-  if (writeMatch) {
-    let [, , rawContent, filePath] = writeMatch;
-
-    // 1) Turn literal \n into real newlines
-    rawContent = rawContent.replace(/\\n/g, '\n');
-    // 2) Unescape any \" or \' or \`
-    rawContent = rawContent
-      .replace(/\\"/g, '"')
-      .replace(/\\'/g, "'")
-      .replace(/\\`/g, '`');
-
-    try {
-      writeFileSync(filePath, rawContent, 'utf8');
-      console.log(`✅ Wrote file '${filePath}' with proper formatting`);
-      return { success: true, output: `File ${filePath} written` };
-    } catch (error) {
-      console.error(`❌ Error writing file ${filePath}: ${error.message}`);
-      return { success: false, error: error.message };
+    // 📝 If it's an echo file write command
+    const parsed = parseEchoCommand(command);
+    if (parsed) {
+      try {
+        writeFileSync(parsed.filePath, parsed.content, 'utf8');
+        console.log(`✅ Wrote file '${parsed.filePath}' with formatted content`);
+        return { success: true, output: `File ${parsed.filePath} written` };
+      } catch (error) {
+        console.error(`❌ Error writing file ${parsed.filePath}: ${error.message}`);
+        return { success: false, error: error.message };
+      }
     }
-  }
 
-    // Fallback to normal shell execution
+    // 📝 Otherwise execute as normal shell command
     try {
       const output = execSync(command, { encoding: 'utf-8', shell: true });
       console.log(`✅ Command output:\n${output}`);
@@ -91,67 +88,7 @@ export async function handleToolCalls(func) {
       return { success: false, error: error.message };
     }
   }
-  else {
-    const msg = `Unknown function ${func.name}`;
-    console.log(`⚠️ ${msg}`);
-    return { success: false, error: msg };
-  }
+
+  console.error(`⚠️ Unknown function ${func.name}`);
+  return { success: false, error: `Unknown function ${func.name}` };
 }
-// export async function handleToolCalls(func) {
-//   console.log("\n\nInside handle tools\n\n");
-//   if (!func) {
-//     const msg = "No function call returned";
-//     console.log(`⚠️ ${msg}`);
-//     return { success: false, error: msg };
-//   }
-
-//   // 1) Directory creation
-//   if (func.name === "create_directory") {
-//     const { directory_name } = func.args;
-//     try {
-//       mkdirSync(directory_name, { recursive: true });
-//       console.log(`✅ Directory '${directory_name}' created.`);
-//       return { success: true, directory: directory_name };
-//     } catch (error) {
-//       console.error(`❌ Error creating directory: ${error.message}`);
-//       return { success: false, error: error.message };
-//     }
-//   }
-
-//   // 2) File creation / arbitrary shell commands
-//   else if (func.name === "run_command") {
-//     const { command } = func.args;
-
-//     // If this is a “write HTML/CSS/JS to a file” command,
-//     // detect it and use fs.writeFileSync instead of echo+redirect:
-//     const writeMatch = command.match(/^echo\s+'([\s\S]*)'\s+>\s+(.+)$/);
-//     if (writeMatch) {
-//       const [, content, filePath] = writeMatch;
-
-//       try {
-//         writeFileSync(filePath, content, 'utf8');
-//         console.log(`✅ Wrote file '${filePath}' via fs.writeFileSync`);
-//         return { success: true, output: `File ${filePath} written` };
-//       } catch (error) {
-//         console.error(`❌ Error writing file ${filePath}: ${error.message}`);
-//         return { success: false, error: error.message };
-//       }
-//     }
-
-//     // Otherwise fall back to real shell execution
-//     try {
-//       const output = execSync(command, { encoding: 'utf-8', shell: true });
-//       console.log(`✅ Command output:\n${output}`);
-//       return { success: true, output };
-//     } catch (error) {
-//       console.error(`❌ Error executing command: ${error.message}`);
-//       return { success: false, error: error.message };
-//     }
-//   }
-
-//   else {
-//     const msg = `Unknown function ${func.name}`;
-//     console.log(`⚠️ ${msg}`);
-//     return { success: false, error: msg };
-//   }
-// }

@@ -1,33 +1,39 @@
+// /utils/main.js
 import ai from './ai.js';
 import { functionDeclarations, handleToolCalls } from './tool.js';
 import { FunctionCallingConfigMode, Type } from '@google/genai';
 
+// 📝 System instruction for Planner agent
 const systemInsPlanner = `
-You are Avi, a structured AI planner. 
-You are only frontend expert i.e html, css and js.
-Who can develop any site using only these: html,css and js.
-
+You are Avi, a structured AI planner.
+You are only a frontend expert (HTML, CSS, JS) who develops sites using only these.
+Start by creating a folder named on the project.
 Work in phases: start ➝ plan ➝ action ➝ observe ➝ output.
 - Only take **one step at a time**. Produce exactly one JSON object per response.
 - Never call tools directly. Instead, output the required action in JSON schema.
 - Think systematically and respond one step at a time.
+- If process has no content, retry it once before outputting failure.
+The site created must be beautiful and colorful to attract the audience again and again.
 `;
 
-/**
- * Schema for Agent B (planner)
- */
+// Logging utility
+function debugLog(...args) {
+  if (process.env.DEBUG) console.log(...args);
+}
+
+// Agent response schema
 export const agentResponseSchema = {
   type: Type.OBJECT,
-  description: "Represents a single step in the AI agent's execution process.",
+  description: "Single step in the AI agent's execution process.",
   properties: {
     step: {
       type: Type.STRING,
-      enum: ["start", "plan", "action", "observe", "output"],
-      description: "Phase of agent's execution"
+      enum: ["start", "plan", "action", "code", "observe", "output"],
+      description: "Phase of execution"
     },
     content: {
       type: Type.STRING,
-      description: "Step description, observation, or final output"
+      description: "Description, observation, or final output"
     },
     function: {
       type: Type.STRING,
@@ -41,17 +47,20 @@ export const agentResponseSchema = {
         directory_name: { type: Type.STRING },
         command: { type: Type.STRING },
       },
-      required: []
     },
   },
   required: ["step", "content"]
 };
 
 export async function main(history) {
-  const genAI = ai; // your imported Gemini client
+  const genAI = ai; // imported Gemini client
+  let iteration = 0;
+  const MAX_ITERATIONS = 20;
 
-  while (true) {
-    // 👉 **Step 1: Agent B - Planner**
+  while (iteration < MAX_ITERATIONS) {
+    iteration++;
+
+    // Step 1: Planner
     const plannerResponse = await genAI.models.generateContent({
       model: "gemini-2.5-flash",
       contents: history,
@@ -63,19 +72,25 @@ export async function main(history) {
       }
     });
 
-        const stepJson = JSON.parse(plannerResponse.text);
-    console.log("Agent B:", stepJson);
+    const stepJson = JSON.parse(plannerResponse.text);
+    debugLog("\n\n🗂️ Agent Planner:", stepJson);
 
     history.push({ role: "model", parts: [{ text: plannerResponse.text }] });
 
-    // 👉 **Check step type**
+    // Exit if planner outputs final result
     if (stepJson.step === "output") {
-      console.log("✅ Final Output:", stepJson.content);
+      console.log("🎉 Final Output:", stepJson.content);
       break;
     }
 
+
+    // 🔧 Execute action steps only
     if (stepJson.step === "action") {
-      // 👉 **Step 2: Agent A - Tool Executor**
+      if (!stepJson.function || !stepJson.input) {
+        console.error("❌ Invalid action step: Missing function or input");
+        break;
+      }
+
       const toolCallPrompt = `Execute this action step:
       Function: ${stepJson.function}
       Input: ${JSON.stringify(stepJson.input)}`;
@@ -84,152 +99,40 @@ export async function main(history) {
         model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: toolCallPrompt }] }],
         config: {
-            systemInstruction:`
-            You are only frontend expert i.e html, css and js.
-            Who can develop any site using only these: html,css and js.
-            
+          systemInstruction: `
+            You are only a frontend expert (HTML, CSS, JS).
+            Analyze the prompt and do accordingly.
+            The site created must be beautiful and colorful to attract the audience again and again.
+
             🛠 **Available Tools:**
-
-                1. **create_directory**
-                   - **Description**: Creates a new directory in the system.
-                   - **Parameters**:
-                     - 'directory_name' (string): Name of the directory to create.
-
-                2. **run_command**
-                   - **Description**: Executes a shell command in the system and returns output or error.
-                   - **Parameters**:
-                     - 'command' (string): The shell command to execute.`,
+            1. create_directory - Creates a directory
+            2. run_command - Executes a shell command
+          `,
           temperature: 0.1,
-          toolConfig: {
-            functionCallingConfig: {
-              mode: FunctionCallingConfigMode.ANY,
-            }
-          },
+          toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.ANY } },
           tools: [{ functionDeclarations }]
         }
       });
 
       const toolResult = toolExecutorResponse.candidates[0].content.parts[0];
-      console.log("Agent A Tool Result:", toolResult);
-      // 👉 Execute and await the tool call
+      debugLog("\n\n🔧 Agent Tool:", toolResult);
+
       const executionResult = await handleToolCalls(toolResult.functionCall);
 
-// 👉 Feed a proper observation back to the planner
+      // 📝 Feed observation back to planner
       const observation = {
         step: "observe",
-        // include both the original function call and its result
         content: JSON.stringify({
           functionCall: toolResult.functionCall,
-          result: await executionResult
+          result: executionResult
         })
       };
 
-      history.push({
-        role: "user",
-        parts: [{ text: JSON.stringify(observation) }]
-      });
-
-    } else {
-      continue;
+      history.push({ role: "user", parts: [{ text: JSON.stringify(observation) }] });
     }
+  }
 
+  if (iteration >= MAX_ITERATIONS) {
+    console.error("⚠️ Planner exceeded max iterations. Exiting.");
   }
 }
-
-// import ai from './ai.js';
-// import { functionDeclarations, handleToolCalls } from './tool.js';
-// // import { FunctionCallingConfigMode } from '@google/genai';
-// import { Type } from '@google/genai';
-
-// const systemIns = `
-
-
-// You are Avi, an AI agent. 
-
-// You work in phases: start ➝ plan ➝ action ➝ observe ➝ output.
-// 🛑 **Rules:**
-// - Work in distinct phases: start ➝ plan ➝ action ➝ observe ➝ output.
-// - Only take **one step at a time**. **Produce exactly one JSON object per response.**
-// - Always analyze the user's query carefully before acting.
-// - Use available tools via their function calls when needed.
-// - Wait for observation from tools before generating final outputs.
-// - **Do not chain multiple steps in a single response.**
-
-// 💡 **Phase descriptions:**
-// - **start**: Acknowledge user query and prepare for planning.
-// - **plan**: Think about step-by-step approach to fulfill the query.
-// - **action**: Call a tool with the required input to perform the action.
-// - **observe**: Note down the tool's output.
-// - **output**: Provide the final answer to the user.
-
-// 🛠 **Available Tools:**
-
-// 1. **create_directory**
-//    - **Description**: Creates a new directory in the system.
-//    - **Parameters**:
-//      - 'directory_name' (string): Name of the directory to create.
-
-// 2. **run_command**
-//    - **Description**: Executes a shell command in the system and returns output or error.
-//    - **Parameters**:
-//      - 'command' (string): The shell command to execute.
-
-// - Always analyze the user's query carefully before acting.
-// - Use available tools via their function calls when needed.
-// - Wait for observation from tools before generating final outputs.
-
-
-// 🧪 **Example Flow:**
-
-// User: Create a directory called test_folder.
-
-// {{"step": "start", "content": "User requested to create a directory named test_folder."}}
-// {{"step": "plan", "content": "I will use create_directory to create test_folder."}}
-// {{"step": "action", "function": "create_directory", "input": {"directory_name": "test_folder"}}}
-// {{"step": "observe", "output": "✅ Directory 'test_folder' created."}}
-// {{"step": "output", "content": "Directory 'test_folder' has been created successfully."}}
-
-
-// Your outputs must follow this JSON structure:
-
-// Output JSON Format:
-//     {{
-//         "step": "string",
-//         "content": "string",
-//         "function": "The name of function if the step is action",
-//         "input": "The input parameter for the function",
-//     }}
-
-// Think systematically and respond one step at a time.
-
-// `;
-
-// export async function main(history) {
-    
-// //   while (true) {
-//     try {
-//         const response = await ai.models.generateContent({
-//         model: "gemini-2.5-flash",
-//         contents: history,
-//         config: {
-//             systemInstruction: systemIns,
-//             temperature: 0.5,
-//             toolConfig: {
-//                     functionCallingConfig: {
-//                         mode: "AUTO",
-//                         // allowedFunctionNames: ['create_directory', 'run_command']
-//                     }
-//                 },
-//             tools: [{ functionDeclarations }],
-//         }
-//     });
-
-//     console.log(JSON.stringify(response));
-//     const func = response.candidates[0].content.parts[0].functionCall;
-//     await handleToolCalls(func);
-//     } catch (error) {
-//         console.log(error)
-//     }
-//     // }
-// }
-
