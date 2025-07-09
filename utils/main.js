@@ -55,7 +55,7 @@ export const agentResponseSchema = {
 export async function main(history) {
   const genAI = ai; // imported Gemini client
   let iteration = 0;
-  const MAX_ITERATIONS = 20;
+  const MAX_ITERATIONS = 30;
 
   while (iteration < MAX_ITERATIONS) {
     iteration++;

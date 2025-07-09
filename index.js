@@ -1,26 +1,34 @@
-// ./index.js
-import express from "express";
+#!/usr/bin/env node
+
 import { main } from "./utils/main.js";
 
-const app = express();
-app.use(express.json());
+// 📝 Parse CLI arguments
+const args = process.argv.slice(2);
+let folder_location = "./site";
+let description = "Build a todo app";
 
-app.get("/", async (req, res) => {
-  const folder_location = req.query.folder_location || "C:/";
-  const description = req.query.description || "Build a todo app";
+// Support usage like:
+// npx my-ai-builder --folder ./site --description "Build a SaaS landing"
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--folder" && args[i + 1]) {
+    folder_location = args[i + 1];
+  }
+  if (args[i] === "--description" && args[i + 1]) {
+    description = args[i + 1];
+  }
+}
 
-  const prompt = `Inside the ${folder_location} build a website on the following description.\n${description}`;
+const prompt = `Inside the ${folder_location} build a website on the following description.\n${description}`;
+const build = [{ role: "user", parts: [{ text: prompt }] }];
 
-  const build = [{ role: "user", parts: [{ text: prompt }] }];
-
+(async () => {
   try {
     const result = await main(build);
-    res.json({ success: true, result });
+    console.log("✅ Build result:", result);
   } catch (error) {
-    console.error("❌ API Error:", error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error("❌ CLI Error:", error.message);
+    process.exit(1);
   }
-});
+})();
 
-// Start server
-app.listen(3000, () => console.log("🚀 API running"));
+// git commit -m "cli-alpha"
