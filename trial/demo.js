@@ -1,4 +1,3 @@
-
 import dotenv from 'dotenv'
 import { execSync } from 'child_process'
 import { GoogleGenAI, FunctionCallingConfigMode, Type } from '@google/genai'

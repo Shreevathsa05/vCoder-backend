@@ -5,7 +5,7 @@ import { main } from "./utils/main.js";
 let history = [
         { 
             role: "user", 
-            parts: [{ text: "Hello who are you" }] 
+            parts: [{ text: "inside folder shree Create a todo site" }] 
         },
         
     ];
